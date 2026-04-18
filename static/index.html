@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>📞 CallPilot</title>
+    <title>📞 CallPilot [DEPRECATED]</title>
     <style>
         :root {
             --bg: #0d1117;
@@ -194,6 +194,9 @@
     </style>
 </head>
 <body>
+<div style="background:#b08800;color:#fff;text-align:center;padding:12px 16px;font-family:monospace;font-size:14px;position:sticky;top:0;z-index:9999;">
+  ⚠️ <strong>DEPRECATED</strong> — This UI is no longer maintained. Use the <strong>GitHub Copilot CLI</strong> with the <code>callpilot</code> skill instead. &nbsp;|&nbsp; <em>Just say: "Call [number] and [instructions]"</em>
+</div>
     <div class="container">
         <h1>📞 CallPilot</h1>
         <p class="subtitle">{{CLIENT_NAME}}'s AI phone assistant — tell it what to do and it makes the call for you.</p>
@@ -281,6 +284,12 @@
             <div id="transcriptSection" class="hidden">
                 <label>Live Transcript</label>
                 <div class="transcript" id="transcript"></div>
+            </div>
+
+            <div id="recordingSection" class="hidden" style="margin-top: 16px;">
+                <label>📼 Call Recording</label>
+                <audio id="recordingAudio" controls style="width: 100%; margin-top: 8px;"></audio>
+                <a id="recordingDownload" href="#" download style="display: inline-block; margin-top: 8px; color: var(--accent); font-size: 13px; text-decoration: none;">⬇ Download MP3</a>
             </div>
 
             <button onclick="resetUI()" style="margin-top: 16px; background: var(--border);">New Call</button>
@@ -451,6 +460,19 @@
                     `).join('');
                     container.scrollTop = container.scrollHeight;
                 }
+
+                // Recording (appears once Twilio finishes processing — usually a few seconds after call ends)
+                if (data.recording_url) {
+                    const recSection = document.getElementById('recordingSection');
+                    const audio = document.getElementById('recordingAudio');
+                    const dl = document.getElementById('recordingDownload');
+                    if (audio.dataset.src !== data.recording_url) {
+                        audio.src = data.recording_url;
+                        audio.dataset.src = data.recording_url;
+                        dl.href = data.recording_url;
+                        recSection.classList.remove('hidden');
+                    }
+                }
             }, 2000);
         }
 
@@ -468,6 +490,12 @@
             document.getElementById('callStatus').classList.add('hidden');
             document.getElementById('transcript').innerHTML = '';
             document.getElementById('transcriptSection').classList.add('hidden');
+            const recSection = document.getElementById('recordingSection');
+            const audio = document.getElementById('recordingAudio');
+            audio.pause();
+            audio.removeAttribute('src');
+            audio.dataset.src = '';
+            recSection.classList.add('hidden');
             document.getElementById('callBtn').disabled = false;
             document.getElementById('callBtn').textContent = '🤙 Make the Call';
         }

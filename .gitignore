@@ -10,6 +10,10 @@ vectorstore/
 # Transcripts (local call data)
 transcripts/
 
+# Call recordings (local MP3s)
+recordings/
+
+
 # IDE
 .vscode/
 .idea/

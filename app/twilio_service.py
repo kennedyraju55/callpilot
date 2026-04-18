@@ -28,6 +28,9 @@ class CallRecord:
     transcript: list[dict] = field(default_factory=list)
     summary: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    recording_sid: str | None = None
+    recording_url: str | None = None
+    recording_duration: int | None = None
 
 
 # In-memory call store (fine for MVP)
@@ -47,7 +50,7 @@ def initiate_call(to_number: str, instructions: str, system_prompt: str | None =
 
     amd_callback_url = f"{settings.server_base_url}/amd-callback/{call_id}"
 
-    twilio_call = client.calls.create(
+    call_kwargs = dict(
         to=to_number,
         from_=settings.twilio_phone_number,
         url=twiml_url,
@@ -59,6 +62,17 @@ def initiate_call(to_number: str, instructions: str, system_prompt: str | None =
         async_amd_status_callback=amd_callback_url,
         async_amd_status_callback_method="POST",
     )
+
+    if settings.enable_recording:
+        call_kwargs.update(
+            record=True,
+            recording_channels="dual",
+            recording_status_callback=f"{settings.server_base_url}/recording-status/{call_id}",
+            recording_status_callback_method="POST",
+            recording_status_callback_event=["completed"],
+        )
+
+    twilio_call = client.calls.create(**call_kwargs)
 
     record.twilio_sid = twilio_call.sid
     record.status = CallStatus.QUEUED

@@ -70,15 +70,18 @@ async def get_call(call_id: str):
     """Get the current status and transcript of a call."""
     record = call_store.get(call_id)
     if not record:
-        return {"error": "Call not found"}
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Call not found")
     return {
         "call_id": record.call_id,
         "to_number": record.to_number,
-        "status": record.status.value,
+        "status": record.status.value if hasattr(record.status, 'value') else record.status,
         "instructions": record.instructions,
         "transcript": record.transcript,
         "summary": record.summary,
         "created_at": record.created_at,
+        "recording_url": f"/recordings/{record.call_id}.mp3" if record.recording_sid else None,
+        "recording_duration": record.recording_duration,
     }
 
 
@@ -116,6 +119,56 @@ async def amd_callback(call_id: str, request: Request):
             client.calls(record.twilio_sid).update(status="completed")
             print(f"[{call_id}] ☎️ Voicemail detected — call disconnected to save costs")
     return {"ok": True}
+
+
+@app.post("/recording-status/{call_id}")
+async def recording_status_webhook(call_id: str, request: Request):
+    """Twilio posts here when call recording is ready. Download MP3 locally."""
+    import httpx
+    from pathlib import Path
+
+    form = await request.form()
+    recording_sid = form.get("RecordingSid")
+    recording_url = form.get("RecordingUrl")  # base URL, append .mp3 to download
+    duration = form.get("RecordingDuration")
+    status = form.get("RecordingStatus", "")
+
+    print(f"[{call_id}] Recording status: {status} sid={recording_sid} dur={duration}s")
+
+    record = call_store.get(call_id)
+    if record:
+        record.recording_sid = recording_sid
+        record.recording_url = recording_url
+        record.recording_duration = int(duration) if duration else None
+
+    if status == "completed" and recording_url:
+        recordings_dir = Path("recordings")
+        recordings_dir.mkdir(exist_ok=True)
+        dest = recordings_dir / f"{call_id}.mp3"
+        try:
+            async with httpx.AsyncClient(timeout=30) as http:
+                r = await http.get(
+                    f"{recording_url}.mp3",
+                    auth=(settings.twilio_account_sid, settings.twilio_auth_token),
+                )
+                r.raise_for_status()
+                dest.write_bytes(r.content)
+            print(f"[{call_id}] ✓ Recording saved to {dest} ({len(r.content)} bytes)")
+        except Exception as e:
+            print(f"[{call_id}] ✗ Failed to download recording: {e}")
+
+    return {"ok": True}
+
+
+@app.get("/recordings/{filename}")
+async def get_recording(filename: str):
+    """Serve a saved call recording MP3."""
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+    path = Path("recordings") / filename
+    if not path.exists() or not path.is_file():
+        return Response(status_code=404, content="Recording not found")
+    return FileResponse(path, media_type="audio/mpeg", filename=filename)
 
 
 @app.post("/test-call")
