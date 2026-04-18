@@ -1,4 +1,4 @@
-"""Context builder — retrieves relevant document chunks for a call."""
+"""Context builder — retrieves relevant document chunks for a specific client."""
 
 from pathlib import Path
 from openai import OpenAI
@@ -22,14 +22,15 @@ def _get_embedding(text: str) -> list[float]:
     return resp.data[0].embedding
 
 
-def retrieve_context(query: str, top_k: int = TOP_K) -> str:
-    """Search vector store for relevant chunks and return formatted context."""
-    client = _get_chroma()
-    if not client:
+def retrieve_context(query: str, client_id: str = "default", top_k: int = TOP_K) -> str:
+    """Search the client's vector store for relevant chunks and return formatted context."""
+    chroma = _get_chroma()
+    if not chroma:
         return ""
 
+    collection_name = f"client_{client_id}"
     try:
-        collection = client.get_collection("callpilot_docs")
+        collection = chroma.get_collection(collection_name)
     except Exception:
         return ""
 

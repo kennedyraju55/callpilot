@@ -1,4 +1,8 @@
-"""Document processor — parses, chunks, and indexes documents from the context/ folder."""
+"""Document processor — parses, chunks, and indexes documents from clients/ folders.
+
+Each client gets their own ChromaDB collection named 'client_{client_id}'.
+On startup, all clients found in clients/ are indexed automatically.
+"""
 
 from pathlib import Path
 from openai import OpenAI
@@ -6,14 +10,17 @@ import chromadb
 
 from app.config import settings
 
-CONTEXT_DIR = Path("context")
+CLIENTS_DIR = Path("clients")
 VECTORSTORE_DIR = Path("vectorstore")
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
+# Files that are config, not content — never indexed into RAG
+SKIP_FILES = {"system-prompt.txt", "README.md"}
+
 
 def _extract_text(filepath: Path) -> str:
-    """Extract text from PDF, DOCX, or TXT files."""
+    """Extract text from PDF, DOCX, TXT, or MD files."""
     suffix = filepath.suffix.lower()
 
     if suffix in (".txt", ".md"):
@@ -60,23 +67,52 @@ def _get_chroma() -> chromadb.ClientAPI:
     return chromadb.PersistentClient(path=str(VECTORSTORE_DIR))
 
 
-def index_documents() -> int:
-    """Scan context/ folder, parse, chunk, embed, and store in ChromaDB.
+def get_client_name(client_id: str) -> str:
+    """Extract client full name from their profile.txt. Falls back to client_id."""
+    profile = CLIENTS_DIR / client_id / "profile.txt"
+    if profile.exists():
+        for line in profile.read_text(encoding="utf-8").splitlines():
+            if line.lower().startswith("full name:"):
+                name = line.split(":", 1)[1].strip()
+                if name:
+                    return name
+    return client_id.replace("-", " ").title()
+
+
+def list_clients() -> list[str]:
+    """Return all client IDs found in clients/ folder."""
+    if not CLIENTS_DIR.exists():
+        return []
+    return [d.name for d in CLIENTS_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")]
+
+
+def index_client(client_id: str) -> int:
+    """Index all documents for one client into their ChromaDB collection.
     Returns number of chunks indexed."""
-
-    CONTEXT_DIR.mkdir(exist_ok=True)
-
-    supported = {".txt", ".md", ".pdf", ".docx"}
-    # Exclude config files from RAG indexing
-    SKIP_FILES = {"system-prompt.txt"}
-    files = [f for f in CONTEXT_DIR.iterdir()
-             if f.is_file() and f.suffix.lower() in supported and f.name not in SKIP_FILES]
-
-    if not files:
-        print("[CallPilot] No documents in context/ folder.")
+    client_dir = CLIENTS_DIR / client_id
+    if not client_dir.exists():
+        print(f"[CallPilot] Client folder not found: {client_dir}")
         return 0
 
-    print(f"[CallPilot] Found {len(files)} document(s) in context/")
+    supported = {".txt", ".md", ".pdf", ".docx"}
+    files = [
+        f for f in client_dir.iterdir()
+        if f.is_file() and f.suffix.lower() in supported and f.name not in SKIP_FILES
+    ]
+
+    collection_name = f"client_{client_id}"
+
+    if not files:
+        print(f"[CallPilot] No documents for client '{client_id}' — skipping index")
+        chroma = _get_chroma()
+        try:
+            chroma.delete_collection(collection_name)
+        except Exception:
+            pass
+        chroma.create_collection(collection_name)
+        return 0
+
+    print(f"[CallPilot] Indexing client '{client_id}': {len(files)} document(s)")
 
     all_chunks, all_metas, all_ids = [], [], []
 
@@ -88,23 +124,23 @@ def index_documents() -> int:
         chunks = _chunk_text(text)
         for i, chunk in enumerate(chunks):
             all_chunks.append(chunk)
-            all_metas.append({"source": filepath.name, "chunk_index": i})
-            all_ids.append(f"{filepath.stem}_{i}")
+            all_metas.append({"source": filepath.name, "chunk_index": i, "client_id": client_id})
+            all_ids.append(f"{client_id}_{filepath.stem}_{i}")
 
     if not all_chunks:
-        print("[CallPilot] No text extracted from documents.")
+        print(f"[CallPilot] No text extracted for client '{client_id}'")
         return 0
 
     print(f"[CallPilot] Generating embeddings for {len(all_chunks)} chunks...")
     embeddings = _get_embeddings(all_chunks)
 
-    client = _get_chroma()
+    chroma = _get_chroma()
     try:
-        client.delete_collection("callpilot_docs")
+        chroma.delete_collection(collection_name)
     except Exception:
         pass
 
-    collection = client.create_collection("callpilot_docs")
+    collection = chroma.create_collection(collection_name)
     collection.add(
         ids=all_ids,
         documents=all_chunks,
@@ -112,5 +148,25 @@ def index_documents() -> int:
         metadatas=all_metas,
     )
 
-    print(f"[CallPilot] ✓ Indexed {len(all_chunks)} chunks from {len(files)} file(s).")
+    print(f"[CallPilot] ✓ Client '{client_id}': {len(all_chunks)} chunks indexed")
     return len(all_chunks)
+
+
+def index_all_clients() -> dict[str, int]:
+    """Index documents for every client found in clients/ folder.
+    Returns {client_id: chunk_count}."""
+    CLIENTS_DIR.mkdir(exist_ok=True)
+    clients = list_clients()
+
+    if not clients:
+        print("[CallPilot] No clients found in clients/ folder.")
+        return {}
+
+    print(f"[CallPilot] Found {len(clients)} client(s): {', '.join(clients)}")
+    results = {}
+    for client_id in clients:
+        results[client_id] = index_client(client_id)
+
+    total = sum(results.values())
+    print(f"[CallPilot] ✓ All clients indexed: {total} total chunks across {len(clients)} client(s)")
+    return results

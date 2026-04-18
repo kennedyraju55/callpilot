@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>📞 CallPilot [DEPRECATED]</title>
+    <title>📞 CallPilot</title>
     <style>
         :root {
             --bg: #0d1117;
@@ -206,6 +206,9 @@
             <label for="phone">Phone Number</label>
             <input type="tel" id="phone" placeholder="+1 (555) 123-4567" />
 
+            <label for="clientId">Client ID <span style="color:var(--muted);font-weight:400">(folder name in clients/)</span></label>
+            <input type="text" id="clientId" placeholder="default" value="default" />
+
             <label for="instructions">Call Instructions</label>
             <div class="examples">
                 <span class="example-chip" onclick="setExample(this)">Book a dentist appointment for next Tuesday at 3pm</span>
@@ -400,6 +403,7 @@
                     body: JSON.stringify({
                         to_number: phone,
                         instructions,
+                        client_id: (document.getElementById('clientId').value.trim() || 'default'),
                         system_prompt: document.getElementById('systemPrompt').value || null,
                     }),
                 });

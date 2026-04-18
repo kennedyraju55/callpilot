@@ -22,6 +22,7 @@ class CallRecord:
     call_id: str
     to_number: str
     instructions: str
+    client_id: str = "default"
     system_prompt: str | None = None
     status: CallStatus = CallStatus.QUEUED
     twilio_sid: str | None = None
@@ -37,10 +38,10 @@ class CallRecord:
 call_store: dict[str, CallRecord] = {}
 
 
-def initiate_call(to_number: str, instructions: str, system_prompt: str | None = None) -> CallRecord:
+def initiate_call(to_number: str, instructions: str, client_id: str = "default", system_prompt: str | None = None) -> CallRecord:
     """Place an outbound call via Twilio and return the call record."""
     call_id = str(uuid.uuid4())[:8]
-    record = CallRecord(call_id=call_id, to_number=to_number, instructions=instructions, system_prompt=system_prompt)
+    record = CallRecord(call_id=call_id, to_number=to_number, instructions=instructions, client_id=client_id, system_prompt=system_prompt)
 
     client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
 

@@ -19,9 +19,11 @@ from app.config import settings
 from app.twilio_service import call_store, CallStatus
 from app.context_builder import retrieve_context
 from app.providers import get_provider
+from app.doc_processor import get_client_name
 
 TRANSCRIPTS_DIR = Path("transcripts")
-SYSTEM_PROMPT_FILE = Path("context/system-prompt.txt")
+CLIENTS_DIR = Path("clients")
+GLOBAL_SYSTEM_PROMPT_FILE = Path("context/system-prompt.txt")
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are CallPilot, a professional AI phone assistant.
@@ -48,15 +50,20 @@ def _log(call_id: str, msg: str):
     print(f"[VoiceApp][{call_id}] {msg}")
 
 
-def build_system_prompt(instructions: str, rag_context: str = "", custom_prompt: str | None = None) -> str:
-    name = settings.client_name
+def _get_system_prompt_template(client_id: str) -> str:
+    """Load system prompt: client folder → global context/ → DEFAULT."""
+    client_prompt = CLIENTS_DIR / client_id / "system-prompt.txt"
+    if client_prompt.exists():
+        return client_prompt.read_text(encoding="utf-8")
+    if GLOBAL_SYSTEM_PROMPT_FILE.exists():
+        return GLOBAL_SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
+    return DEFAULT_SYSTEM_PROMPT
 
-    if custom_prompt:
-        template = custom_prompt
-    elif SYSTEM_PROMPT_FILE.exists():
-        template = SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
-    else:
-        template = DEFAULT_SYSTEM_PROMPT
+
+def build_system_prompt(instructions: str, rag_context: str = "", client_id: str = "default", custom_prompt: str | None = None) -> str:
+    name = get_client_name(client_id)
+
+    template = custom_prompt if custom_prompt else _get_system_prompt_template(client_id)
 
     rag_section = ""
     if rag_context:
@@ -68,11 +75,19 @@ def build_system_prompt(instructions: str, rag_context: str = "", custom_prompt:
             f"check with {name} and get back to them."
         )
 
-    return template.format(
-        client_name=name,
-        instructions=instructions,
-        rag_context=rag_section,
-    )
+    try:
+        return template.format(
+            client_name=name,
+            instructions=instructions,
+            rag_context=rag_section,
+        )
+    except (KeyError, ValueError) as e:
+        _log("sys", f"⚠️ System prompt format error: {e} — falling back to DEFAULT")
+        return DEFAULT_SYSTEM_PROMPT.format(
+            client_name=name,
+            instructions=instructions,
+            rag_context=rag_section,
+        )
 
 
 def _save_transcript(call_id: str, record):
@@ -148,12 +163,12 @@ async def handle_media_stream(websocket: WebSocket, call_id: str):
             _log(call_id, "Never got streamSid — aborting")
             return
 
-        # Build system prompt with RAG context
+        # Build system prompt with per-client RAG context
         _log(call_id, "Retrieving document context...")
-        rag_context = retrieve_context(record.instructions)
+        rag_context = retrieve_context(record.instructions, client_id=record.client_id)
         if rag_context:
             _log(call_id, f"Found relevant context ({len(rag_context)} chars)")
-        system_prompt = build_system_prompt(record.instructions, rag_context, record.system_prompt)
+        system_prompt = build_system_prompt(record.instructions, rag_context, record.client_id, record.system_prompt)
 
         # Connect to the selected AI provider
         provider = get_provider(call_id, system_prompt)

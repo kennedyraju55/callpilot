@@ -9,16 +9,17 @@ from pydantic import BaseModel
 from app.config import settings
 from app.twilio_service import initiate_call, build_twiml_for_stream, call_store
 from app.media_stream import handle_media_stream
-from app.doc_processor import index_documents
+from app.doc_processor import index_all_clients, get_client_name, list_clients
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: index documents from context/ folder
+    # Startup: index documents for all clients
     print("[CallPilot] Starting up...")
-    count = index_documents()
-    if count:
-        print(f"[CallPilot] ✓ {count} document chunks ready for RAG")
+    results = index_all_clients()
+    total = sum(results.values())
+    if total:
+        print(f"[CallPilot] ✓ {total} document chunks ready for RAG across {len(results)} client(s)")
     yield
     print("[CallPilot] Shutting down.")
 
@@ -32,6 +33,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 class CallRequest(BaseModel):
     to_number: str
     instructions: str
+    client_id: str = "default"
     system_prompt: str | None = None
 
 
@@ -46,7 +48,7 @@ class CallResponse(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def home():
     with open("static/index.html", encoding="utf-8") as f:
-        html = f.read().replace("{{CLIENT_NAME}}", settings.client_name)
+        html = f.read().replace("{{CLIENT_NAME}}", get_client_name("default"))
         return html
 
 
@@ -56,6 +58,7 @@ async def start_call(req: CallRequest):
     record = initiate_call(
         to_number=req.to_number,
         instructions=req.instructions,
+        client_id=req.client_id,
         system_prompt=req.system_prompt,
     )
     return CallResponse(
@@ -177,9 +180,21 @@ async def create_test_call(req: CallRequest):
     import uuid
     from app.twilio_service import CallRecord, call_store as store
     call_id = "test-" + str(uuid.uuid4())[:4]
-    record = CallRecord(call_id=call_id, to_number=req.to_number, instructions=req.instructions)
+    record = CallRecord(call_id=call_id, to_number=req.to_number, instructions=req.instructions, client_id=req.client_id)
     store[call_id] = record
     return {"call_id": call_id, "status": "ready", "ws_url": f"/media-stream/{call_id}"}
+
+
+@app.get("/clients")
+async def get_clients():
+    """List all available client IDs and their names."""
+    clients = list_clients()
+    return {
+        "clients": [
+            {"client_id": c, "name": get_client_name(c)}
+            for c in clients
+        ]
+    }
 
 
 @app.get("/system-prompt")

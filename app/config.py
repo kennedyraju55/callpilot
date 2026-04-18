@@ -27,9 +27,6 @@ class Settings(BaseSettings):
 
     # ─────────────────────────────────────────────────────────────────────────
 
-    # Client identity — the person the AI is calling on behalf of
-    client_name: str = "Raju"
-
     # Call recording (Twilio dual-channel). Toggle via ENABLE_RECORDING in .env
     enable_recording: bool = True
 
